@@ -149,6 +149,52 @@ export class AuthService {
     };
   }
 
+  static async googleLogin(email: string, name: string): Promise<{ user: User; token: string }> {
+    let user = db.users.get(email);
+
+    if (!user) {
+      user = {
+        id: 'usr-google-' + Math.random().toString(36).substr(2, 7),
+        email,
+        passwordHash: '',
+        name,
+        role: 'user'
+      };
+      db.users.set(email, user);
+
+      try {
+        const supabase = getSupabaseClient();
+        if (supabase) {
+          await supabase.from('profiles').insert([{
+            email,
+            password_hash: '',
+            name,
+            role: 'user'
+          }]);
+        }
+      } catch (e) {
+        // Ignore optional Supabase insertion errors
+      }
+    }
+
+    currentUserSession = user;
+
+    db.userLogins.unshift({
+      id: 'log-' + Math.random().toString(36).substr(2, 9),
+      userId: user.id,
+      loginProvider: 'google',
+      status: 'success',
+      loggedInAt: new Date().toISOString()
+    });
+
+    const token = generateJwtToken(user);
+
+    return {
+      user,
+      token
+    };
+  }
+
   static getLogins(userId: string): UserLogin[] {
     return db.userLogins.filter(l => l.userId === userId);
   }

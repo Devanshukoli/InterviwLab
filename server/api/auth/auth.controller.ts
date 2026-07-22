@@ -21,6 +21,14 @@ export class AuthController {
     res.json({ success: true, data });
   });
 
+  static google = catchAsync(async (req: Request, res: Response): Promise<void> => {
+    const { email, name } = req.body;
+    const userEmail = email || 'devanshu.google@interviewops.io';
+    const userName = name || 'Devanshu Koli (Google)';
+    const data = await AuthService.googleLogin(userEmail, userName);
+    res.json({ success: true, data });
+  });
+
   static me = catchAsync(async (req: Request, res: Response): Promise<void> => {
     const user = req.user || AuthService.getCurrentUser();
     if (!user) {

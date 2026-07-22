@@ -59,11 +59,20 @@ export default function App() {
       const res = await fetch('/api/auth/me', {
         headers: getAuthHeaders()
       });
+       if (res.status === 401) {
+        localStorage.removeItem('auth_token');
+        setUser(null);
+        return;
+      }
       const json = await res.json();
       if (json.success && json.data) {
         setUser(json.data);
+      } else {
+        localStorage.removeItem('auth_token');
+        setUser(null);
       }
     } catch (e) {
+       localStorage.removeItem('auth_token');
       setUser(null);
     }
   };

@@ -61,22 +61,33 @@ export default function AuthModal({ isOpen, onClose, onSuccess }: AuthModalProps
     }
   };
 
-  const handleGoogleSignIn = () => {
+   const handleGoogleSignIn = async () => {
     setIsLoading(true);
-    setTimeout(() => {
-      const googleUser: UserProfile = {
-        id: 'usr-google-889',
-        email: 'devanshu.google@interviewops.io',
-        name: 'Devanshu Koli (Google)',
-        role: 'user',
-        avatarUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=150'
-      };
-      // Store dummy JWT for Google SSO preview
-      localStorage.setItem('auth_token', 'google-sso-jwt-token');
-      onSuccess(googleUser);
+    setError(null);
+    try {
+      const res = await fetch('/api/auth/google', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: 'devanshu.google@interviewops.io',
+          name: 'Devanshu Koli (Google)'
+        })
+      });
+      const json = await res.json();
+      if (json.success && json.data?.user) {
+        if (json.data.token) {
+          localStorage.setItem('auth_token', json.data.token);
+        }
+        onSuccess(json.data.user);
+        onClose();
+      } else {
+        setError(json.error || 'Google authentication failed');
+      }
+    } catch (err: any) {
+      setError(err.message || 'Google authentication failed');
+    } finally {
       setIsLoading(false);
-      onClose();
-    }, 600);
+    }
   };
 
   const handleBackdropClick = (e: React.MouseEvent<HTMLDivElement>) => {

@@ -81,9 +81,9 @@ export function authenticateJWT(req: Request, res: Response, next: NextFunction)
 
     next();
   } catch (err: any) {
-    console.warn(`🔐 [JWT Middleware] Invalid or expired JWT token: ${err.message}`);
-    // If client supplied a malformed token, return 401
-    res.status(401).json({ success: false, error: 'Invalid or expired authorization token' });
+    // If token is malformed, expired, or invalid, clear req.user so downstream routes handle appropriately
+    req.user = undefined;
+    next();
   }
 }
 
