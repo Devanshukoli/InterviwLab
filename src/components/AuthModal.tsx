@@ -61,16 +61,62 @@ export default function AuthModal({ isOpen, onClose, onSuccess }: AuthModalProps
     }
   };
 
+  // Listen for OAuth postMessage events from popup
+  useEffect(() => {
+    const handleOAuthMessage = (event: MessageEvent) => {
+      const origin = event.origin;
+      if (!origin.endsWith('.run.app') && !origin.includes('localhost') && !origin.includes('127.0.0.1')) {
+        return;
+      }
+      if (event.data?.type === 'OAUTH_AUTH_SUCCESS') {
+        const { token, user } = event.data;
+        if (token) {
+          localStorage.setItem('auth_token', token);
+        }
+        if (user) {
+          onSuccess(user);
+          onClose();
+        }
+        setIsLoading(false);
+      } else if (event.data?.type === 'OAUTH_AUTH_ERROR') {
+        setError(event.data.error || 'Google OAuth failed');
+        setIsLoading(false);
+      }
+    };
+
+    window.addEventListener('message', handleOAuthMessage);
+    return () => window.removeEventListener('message', handleOAuthMessage);
+  }, [onSuccess, onClose]);
+
    const handleGoogleSignIn = async () => {
     setIsLoading(true);
     setError(null);
-    try {
+     try {
+       // 1. Check if Google OAuth URL is available on server
+      const urlRes = await fetch('/api/auth/google/url');
+      const urlJson = await urlRes.json();
+
+      if (urlJson.success && urlJson.data?.configured && urlJson.data?.url) {
+        // Open Google OAuth Popup
+        const authWindow = window.open(
+          urlJson.data.url,
+          'google_oauth',
+          'width=550,height=650,scrollbars=yes'
+        );
+        if (!authWindow) {
+          setError('Popup blocked! Please allow popups for this site to sign in with Google.');
+          setIsLoading(false);
+        }
+        return;
+      }
+
+      // 2. Fallback direct sign-in (when GOOGLE_CLIENT_ID is not configured in .env)
       const res = await fetch('/api/auth/google', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          email: 'devanshu.google@interviewops.io',
-          name: 'Devanshu Koli (Google)'
+          email: email || 'devanshu.google@interviewops.io',
+          name: email || 'Devanshu Koli (Google)'
         })
       });
       const json = await res.json();

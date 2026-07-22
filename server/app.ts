@@ -5,6 +5,7 @@ import { requestTracing, traceContext } from './observability';
 import { authenticateJWT } from './middleware/jwt.middleware';
 import { apiRouter } from './api';
 import { notFoundHandler, globalErrorHandler } from './middleware/error_handling';
+import { AuthController } from './api/auth/auth.controller';
 
 export const app = express();
 
@@ -32,6 +33,9 @@ app.use(authenticateJWT);
 
 // Mount Master Modular API Router under /api
 app.use('/api', apiRouter);
+
+// OAuth Callback handling for /auth/callback
+app.get(['/auth/callback', '/auth/callback/'], AuthController.googleCallback);
 
 // Catch-all 404 handler for unmatched API routes
 app.use('/api/*', notFoundHandler);
