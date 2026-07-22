@@ -1,0 +1,6 @@
+{
+  "name": "InterviewOps",
+  "description": "AI-powered interview preparation platform with production-grade observability.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

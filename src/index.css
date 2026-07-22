@@ -1,0 +1,32 @@
+@import "tailwindcss";
+
+/* Custom dark scrollbar configurations */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #09090b;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #1f1f23;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #2d2d34;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+/* Custom glow animations and layouts */
+body {
+  margin: 0;
+  background-color: #09090b;
+  color: #fafafa;
+}
+
