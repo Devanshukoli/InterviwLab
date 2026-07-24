@@ -6,6 +6,23 @@ export interface User {
   passwordHash: string;
   role: 'user' | 'admin';
   name: string;
+  twoFactorEnabled?: boolean;
+  twoFactorSecret?: string;
+  pendingTwoFactorSecret?: string;
+  backupCodes?: string[];
+  appearance?: 'light' | 'dark' | 'system';
+}
+
+export interface UserSession {
+  id: string;
+  userId: string;
+  token: string;
+  ipAddress: string;
+  userAgent: string;
+  deviceType: string;
+  createdAt: string;
+  lastActiveAt: string;
+  isActive: boolean;
 }
 
 export interface Resume {
@@ -173,6 +190,7 @@ class InMemoryDB {
   subscriptions: Map<string, UserSubscription> = new Map();
   billingHistory: BillingHistory[] = [];
   userLogins: UserLogin[] = [];
+  userSessions: UserSession[] = [];
   userSettings: Map<string, UserSettings> = new Map();
   promptVersions: PromptVersion[] = [];
   usages: AIUsage[] = [];

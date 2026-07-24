@@ -5,6 +5,7 @@ import { requestTracing, traceContext } from './observability';
 import { authenticateJWT } from './middleware/jwt.middleware';
 import { apiRouter } from './api';
 import { notFoundHandler, globalErrorHandler } from './middleware/error_handling';
+
 import { AuthController } from './api/auth/auth.controller';
 
 export const app = express();

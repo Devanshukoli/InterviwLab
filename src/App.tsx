@@ -59,7 +59,7 @@ export default function App() {
       const res = await fetch('/api/auth/me', {
         headers: getAuthHeaders()
       });
-       if (res.status === 401) {
+      if (res.status === 401) {
         localStorage.removeItem('auth_token');
         setUser(null);
         return;
@@ -72,7 +72,7 @@ export default function App() {
         setUser(null);
       }
     } catch (e) {
-       localStorage.removeItem('auth_token');
+      localStorage.removeItem('auth_token');
       setUser(null);
     }
   };

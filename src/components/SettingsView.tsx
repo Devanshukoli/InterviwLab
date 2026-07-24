@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   User, 
   Sun, 
@@ -12,15 +12,31 @@ import {
   Check, 
   Eye, 
   EyeOff,
-  Smartphone,
   Laptop,
-  Loader2
+  Loader2,
+  QrCode,
+  Copy,
+  AlertCircle,
+  RefreshCw
 } from 'lucide-react';
 import { UserProfile } from '../types';
+import { applyTheme } from '../lib/theme';
 
 interface SettingsViewProps {
   user: UserProfile | null;
   onUpdateUser: (updatedFields: Partial<UserProfile>) => void;
+}
+
+interface UserSession {
+  id: string;
+  userId: string;
+  token: string;
+  ipAddress: string;
+  userAgent: string;
+  deviceType: string;
+  createdAt: string;
+  lastActiveAt: string;
+  isActive: boolean;
 }
 
 export default function SettingsView({ user, onUpdateUser }: SettingsViewProps) {
@@ -31,12 +47,27 @@ export default function SettingsView({ user, onUpdateUser }: SettingsViewProps) 
   const [email, setEmail] = useState(user?.email || 'architect@interviewops.io');
 
   // Appearance
-  const [appearance, setAppearance] = useState<'light' | 'dark' | 'system'>(user?.appearance || 'dark');
+  const [appearance, setAppearance] = useState<'light' | 'dark' | 'system'>(user?.appearance || 'light');
 
-  // Security
+  // Security & 2FA State
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
+  const [passError, setPassError] = useState<string | null>(null);
+  const [passSuccess, setPassSuccess] = useState<string | null>(null);
+  const [isChangingPass, setIsChangingPass] = useState(false);
+
   const [twoFactorEnabled, setTwoFactorEnabled] = useState(user?.twoFactorEnabled || false);
+  const [setup2FAData, setSetup2FAData] = useState<{ secret: string; uri: string } | null>(null);
+  const [totpCode, setTotpCode] = useState('');
+  const [totpError, setTotpError] = useState<string | null>(null);
+  const [isVerifying2FA, setIsVerifying2FA] = useState(false);
+  const [backupCodes, setBackupCodes] = useState<string[]>([]);
+  const [copiedCodes, setCopiedCodes] = useState(false);
+  const [isSettingUp2FA, setIsSettingUp2FA] = useState(false);
+
+  // Sessions State
+  const [sessions, setSessions] = useState<UserSession[]>([]);
+  const [isLoadingSessions, setIsLoadingSessions] = useState(false);
 
   // Developer API Keys
   const [geminiKey, setGeminiKey] = useState(user?.apiKeys?.gemini || '');
@@ -51,6 +82,162 @@ export default function SettingsView({ user, onUpdateUser }: SettingsViewProps) 
 
   const [savedSuccess, setSavedSuccess] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+
+  const getAuthHeaders = (): Record<string, string> => {
+    const token = localStorage.getItem('auth_token');
+    return token ? { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' } : { 'Content-Type': 'application/json' };
+  };
+
+  // Fetch active sessions when security tab is opened
+  useEffect(() => {
+    if (activeTab === 'security') {
+      fetchSessions();
+    }
+  }, [activeTab]);
+
+  const fetchSessions = async () => {
+    setIsLoadingSessions(true);
+    try {
+      const res = await fetch('/api/auth/sessions', {
+        headers: getAuthHeaders()
+      });
+      const json = await res.json();
+      if (json.success && Array.isArray(json.data)) {
+        setSessions(json.data);
+      }
+    } catch (e) {
+      // Fallback local display
+    } finally {
+      setIsLoadingSessions(false);
+    }
+  };
+
+  const handleAppearanceChange = (mode: 'light' | 'dark' | 'system') => {
+    setAppearance(mode);
+    applyTheme(mode);
+  };
+
+  const handleChangePassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setPassError(null);
+    setPassSuccess(null);
+    if (!currentPassword || !newPassword) {
+      setPassError('Please enter both current and new password');
+      return;
+    }
+    if (newPassword.length < 8) {
+      setPassError('New password must be at least 8 characters long');
+      return;
+    }
+    setIsChangingPass(true);
+    try {
+      const res = await fetch('/api/auth/change-password', {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ currentPassword, newPassword })
+      });
+      const json = await res.json();
+      if (!res.ok || !json.success) {
+        throw new Error(json.message || 'Failed to update password');
+      }
+      setPassSuccess('Password updated successfully!');
+      setCurrentPassword('');
+      setNewPassword('');
+    } catch (err: any) {
+      setPassError(err.message || 'Password update failed');
+    } finally {
+      setIsChangingPass(false);
+    }
+  };
+
+  const handleStart2FASetup = async () => {
+    setTotpError(null);
+    setIsSettingUp2FA(true);
+    try {
+      const res = await fetch('/api/auth/2fa/setup', {
+        method: 'POST',
+        headers: getAuthHeaders()
+      });
+      const json = await res.json();
+      if (json.success && json.data) {
+        setSetup2FAData(json.data);
+      } else {
+        throw new Error('Failed to initiate 2FA setup');
+      }
+    } catch (err: any) {
+      setTotpError(err.message || 'Failed to initialize 2FA');
+    } finally {
+      setIsSettingUp2FA(false);
+    }
+  };
+
+  const handleVerify2FACode = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setTotpError(null);
+    if (!totpCode || totpCode.length !== 6) {
+      setTotpError('Please enter a valid 6-digit code');
+      return;
+    }
+    setIsVerifying2FA(true);
+    try {
+      const res = await fetch('/api/auth/2fa/verify', {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ code: totpCode })
+      });
+      const json = await res.json();
+      if (!res.ok || !json.success) {
+        throw new Error(json.message || 'Invalid verification code');
+      }
+      setTwoFactorEnabled(true);
+      if (json.data?.backupCodes) {
+        setBackupCodes(json.data.backupCodes);
+      }
+      setSetup2FAData(null);
+      setTotpCode('');
+      onUpdateUser({ twoFactorEnabled: true });
+    } catch (err: any) {
+      setTotpError(err.message || 'Verification failed');
+    } finally {
+      setIsVerifying2FA(false);
+    }
+  };
+
+  const handleDisable2FA = async () => {
+    if (!confirm('Are you sure you want to disable Two-Factor Authentication? Your account will be less secure.')) {
+      return;
+    }
+    try {
+      const res = await fetch('/api/auth/2fa/disable', {
+        method: 'POST',
+        headers: getAuthHeaders()
+      });
+      const json = await res.json();
+      if (json.success) {
+        setTwoFactorEnabled(false);
+        setBackupCodes([]);
+        setSetup2FAData(null);
+        onUpdateUser({ twoFactorEnabled: false });
+      }
+    } catch (err) {
+      alert('Failed to disable 2FA');
+    }
+  };
+
+  const handleRevokeSession = async (sessionId: string) => {
+    try {
+      const res = await fetch(`/api/auth/sessions/${sessionId}`, {
+        method: 'DELETE',
+        headers: getAuthHeaders()
+      });
+      const json = await res.json();
+      if (json.success) {
+        setSessions(prev => prev.filter(s => s.id !== sessionId));
+      }
+    } catch (err) {
+      alert('Failed to revoke session');
+    }
+  };
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -88,14 +275,14 @@ export default function SettingsView({ user, onUpdateUser }: SettingsViewProps) 
     <div className="max-w-4xl mx-auto space-y-8 pb-12">
       
       {/* Header */}
-      <div className="border-b border-zinc-800 pb-5">
-        <h1 className="text-xl font-bold text-white tracking-tight">Account & Platform Settings</h1>
-        <p className="text-xs text-zinc-400 mt-1">Configure user profile, security preferences, and developer API keys.</p>
+      <div className="border-b border-zinc-200 dark:border-zinc-800 pb-5">
+        <h1 className="text-xl font-bold text-zinc-900 dark:text-white tracking-tight">Account & Platform Settings</h1>
+        <p className="text-xs text-zinc-600 dark:text-zinc-400 mt-1">Configure user profile, security preferences, and developer API keys.</p>
       </div>
 
       {savedSuccess && (
-        <div className="p-4 bg-green-950/80 border border-green-800 rounded-xl text-xs font-mono text-green-300 flex items-center gap-2 animate-fadeIn">
-          <Check className="w-4 h-4 text-green-400 shrink-0" />
+        <div className="p-4 bg-green-50 dark:bg-green-950/80 border border-green-200 dark:border-green-800 rounded-xl text-xs font-mono text-green-800 dark:text-green-300 flex items-center gap-2 animate-fadeIn">
+          <Check className="w-4 h-4 text-green-600 dark:text-green-400 shrink-0" />
           <span>Settings saved successfully.</span>
         </div>
       )}
@@ -122,44 +309,44 @@ export default function SettingsView({ user, onUpdateUser }: SettingsViewProps) 
                 onClick={() => setActiveTab(item.id as any)}
                 className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-medium transition-all cursor-pointer text-left ${
                   isActive
-                    ? 'bg-zinc-800 text-white font-semibold'
-                    : 'text-zinc-400 hover:text-white hover:bg-zinc-900'
+                    ? 'bg-zinc-200 dark:bg-zinc-800 text-zinc-900 dark:text-white font-semibold'
+                    : 'text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white hover:bg-zinc-100 dark:hover:bg-zinc-900'
                 }`}
               >
-                <Icon className={`w-3.5 h-3.5 ${item.id === 'danger' ? 'text-red-400' : 'text-zinc-400'}`} />
-                <span className={item.id === 'danger' ? 'text-red-400' : ''}>{item.label}</span>
+                <Icon className={`w-3.5 h-3.5 ${item.id === 'danger' ? 'text-red-500 dark:text-red-400' : 'text-zinc-500 dark:text-zinc-400'}`} />
+                <span className={item.id === 'danger' ? 'text-red-600 dark:text-red-400' : ''}>{item.label}</span>
               </button>
             );
           })}
         </div>
 
         {/* Settings Form Body (3 cols) */}
-        <div className="md:col-span-3 border border-zinc-800 bg-[#0c0c0e] rounded-xl p-6 space-y-6">
+        <div className="md:col-span-3 border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#0c0c0e] rounded-xl p-6 space-y-6 shadow-sm">
           
           <form onSubmit={handleSave} className="space-y-6">
             
             {/* 1. GENERAL */}
             {activeTab === 'general' && (
               <div className="space-y-4">
-                <h2 className="text-sm font-bold text-white uppercase tracking-wider border-b border-zinc-800/80 pb-2">General Profile</h2>
+                <h2 className="text-sm font-bold text-zinc-900 dark:text-white uppercase tracking-wider border-b border-zinc-200 dark:border-zinc-800/80 pb-2">General Profile</h2>
                 
                 <div className="space-y-1">
-                  <label className="text-xs font-semibold text-zinc-300">Display Name</label>
+                  <label className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">Display Name</label>
                   <input
                     type="text"
                     value={name}
                     onChange={(e) => setName(e.target.value)}
-                    className="w-full bg-[#09090b] border border-zinc-800 rounded-lg p-2.5 text-xs text-zinc-200 focus:outline-none focus:border-blue-500 font-mono"
+                    className="w-full bg-zinc-50 dark:bg-[#09090b] border border-zinc-200 dark:border-zinc-800 rounded-lg p-2.5 text-xs text-zinc-900 dark:text-zinc-200 focus:outline-none focus:border-blue-500 font-mono"
                   />
                 </div>
 
                 <div className="space-y-1">
-                  <label className="text-xs font-semibold text-zinc-300">Email Address</label>
+                  <label className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">Email Address</label>
                   <input
                     type="email"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
-                    className="w-full bg-[#09090b] border border-zinc-800 rounded-lg p-2.5 text-xs text-zinc-200 focus:outline-none focus:border-blue-500 font-mono"
+                    className="w-full bg-zinc-50 dark:bg-[#09090b] border border-zinc-200 dark:border-zinc-800 rounded-lg p-2.5 text-xs text-zinc-900 dark:text-zinc-200 focus:outline-none focus:border-blue-500 font-mono"
                   />
                 </div>
               </div>
@@ -168,23 +355,24 @@ export default function SettingsView({ user, onUpdateUser }: SettingsViewProps) 
             {/* 2. APPEARANCE */}
             {activeTab === 'appearance' && (
               <div className="space-y-4">
-                <h2 className="text-sm font-bold text-white uppercase tracking-wider border-b border-zinc-800/80 pb-2">Appearance Settings</h2>
+                <h2 className="text-sm font-bold text-zinc-900 dark:text-white uppercase tracking-wider border-b border-zinc-200 dark:border-zinc-800/80 pb-2">Appearance Settings</h2>
                 <div className="grid grid-cols-3 gap-3">
                   {[
-                    { id: 'dark', label: 'Dark Mode', icon: Moon },
                     { id: 'light', label: 'Light Mode', icon: Sun },
+                    { id: 'dark', label: 'Dark Mode', icon: Moon },
                     { id: 'system', label: 'System Sync', icon: Monitor }
                   ].map(item => {
                     const Icon = item.icon;
+                    const isSelected = appearance === item.id;
                     return (
                       <button
                         key={item.id}
                         type="button"
-                        onClick={() => setAppearance(item.id as any)}
+                        onClick={() => handleAppearanceChange(item.id as any)}
                         className={`p-4 rounded-xl border text-xs flex flex-col items-center gap-2 cursor-pointer transition-all ${
-                          appearance === item.id
-                            ? 'border-white bg-zinc-800 text-white font-bold'
-                            : 'border-zinc-800 bg-[#09090b] text-zinc-400 hover:text-white'
+                          isSelected
+                            ? 'border-blue-600 bg-blue-50 text-blue-700 dark:border-white dark:bg-zinc-800 dark:text-white font-bold shadow-sm'
+                            : 'border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-[#09090b] text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white'
                         }`}
                       >
                         <Icon className="w-5 h-5" />
@@ -196,62 +384,217 @@ export default function SettingsView({ user, onUpdateUser }: SettingsViewProps) 
               </div>
             )}
 
-            {/* 3. SECURITY */}
+            {/* 3. SECURITY & 2FA */}
             {activeTab === 'security' && (
               <div className="space-y-6">
-                <h2 className="text-sm font-bold text-white uppercase tracking-wider border-b border-zinc-800/80 pb-2">Security & Authentication</h2>
+                <h2 className="text-sm font-bold text-zinc-900 dark:text-white uppercase tracking-wider border-b border-zinc-200 dark:border-zinc-800/80 pb-2">Security & Authentication</h2>
 
-                {/* Password change */}
+                {/* Password Change Form */}
                 <div className="space-y-3">
-                  <span className="text-xs font-semibold text-zinc-300 block">Change Password</span>
-                  <input
-                    type="password"
-                    placeholder="Current Password"
-                    value={currentPassword}
-                    onChange={(e) => setCurrentPassword(e.target.value)}
-                    className="w-full bg-[#09090b] border border-zinc-800 rounded-lg p-2.5 text-xs text-zinc-200 focus:outline-none focus:border-blue-500 font-mono"
-                  />
-                  <input
-                    type="password"
-                    placeholder="New Password"
-                    value={newPassword}
-                    onChange={(e) => setNewPassword(e.target.value)}
-                    className="w-full bg-[#09090b] border border-zinc-800 rounded-lg p-2.5 text-xs text-zinc-200 focus:outline-none focus:border-blue-500 font-mono"
-                  />
-                </div>
-
-                {/* 2FA Toggle */}
-                <div className="pt-2 border-t border-zinc-800/80 flex items-center justify-between">
-                  <div>
-                    <span className="text-xs font-bold text-white block">Two-Factor Authentication (2FA)</span>
-                    <span className="text-[11px] text-zinc-400">Add an extra layer of security using an authenticator app.</span>
+                  <span className="text-xs font-semibold text-zinc-800 dark:text-zinc-300 block">Change Password</span>
+                  {passError && (
+                    <div className="p-2.5 bg-red-50 dark:bg-red-950/60 border border-red-200 dark:border-red-800 rounded-lg text-xs text-red-600 dark:text-red-300 flex items-center gap-2">
+                      <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                      <span>{passError}</span>
+                    </div>
+                  )}
+                  {passSuccess && (
+                    <div className="p-2.5 bg-green-50 dark:bg-green-950/60 border border-green-200 dark:border-green-800 rounded-lg text-xs text-green-700 dark:text-green-300 flex items-center gap-2">
+                      <Check className="w-3.5 h-3.5 shrink-0" />
+                      <span>{passSuccess}</span>
+                    </div>
+                  )}
+                  <div className="space-y-2">
+                    <input
+                      type="password"
+                      placeholder="Current Password"
+                      value={currentPassword}
+                      onChange={(e) => setCurrentPassword(e.target.value)}
+                      className="w-full bg-zinc-50 dark:bg-[#09090b] border border-zinc-200 dark:border-zinc-800 rounded-lg p-2.5 text-xs text-zinc-900 dark:text-zinc-200 focus:outline-none focus:border-blue-500 font-mono"
+                    />
+                    <input
+                      type="password"
+                      placeholder="New Password (min. 8 characters)"
+                      value={newPassword}
+                      onChange={(e) => setNewPassword(e.target.value)}
+                      className="w-full bg-zinc-50 dark:bg-[#09090b] border border-zinc-200 dark:border-zinc-800 rounded-lg p-2.5 text-xs text-zinc-900 dark:text-zinc-200 focus:outline-none focus:border-blue-500 font-mono"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleChangePassword}
+                      disabled={isChangingPass}
+                      className="bg-zinc-900 dark:bg-zinc-100 hover:bg-zinc-800 dark:hover:bg-zinc-200 text-white dark:text-black text-xs font-semibold px-4 py-2 rounded-lg transition-colors cursor-pointer flex items-center gap-2 disabled:opacity-50"
+                    >
+                      {isChangingPass ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
+                      <span>Update Password</span>
+                    </button>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => setTwoFactorEnabled(!twoFactorEnabled)}
-                    className={`w-11 h-6 rounded-full transition-colors p-1 cursor-pointer relative ${
-                      twoFactorEnabled ? 'bg-green-600' : 'bg-zinc-800'
-                    }`}
-                  >
-                    <div className={`w-4 h-4 bg-white rounded-full transition-transform ${
-                      twoFactorEnabled ? 'translate-x-5' : 'translate-x-0'
-                    }`}></div>
-                  </button>
                 </div>
 
-                {/* Active Sessions */}
-                <div className="pt-4 border-t border-zinc-800/80 space-y-3">
-                  <span className="text-xs font-bold text-white block">Active Logged-In Sessions</span>
-                  <div className="p-3 bg-[#09090b] border border-zinc-800 rounded-lg flex items-center justify-between text-xs font-mono">
-                    <div className="flex items-center gap-2">
-                      <Laptop className="w-4 h-4 text-zinc-400" />
-                      <div>
-                        <span className="text-zinc-200 block">Chrome / macOS (Current Session)</span>
-                        <span className="text-[10px] text-zinc-500">Active now • IP 127.0.0.1</span>
+                {/* 2FA Section */}
+                <div className="pt-4 border-t border-zinc-200 dark:border-zinc-800/80 space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <span className="text-xs font-bold text-zinc-900 dark:text-white block">Two-Factor Authentication (TOTP 2FA)</span>
+                      <span className="text-[11px] text-zinc-600 dark:text-zinc-400">Secure your account with Google Authenticator, 1Password, or Authy.</span>
+                    </div>
+                    {twoFactorEnabled ? (
+                      <span className="text-[10px] bg-green-100 dark:bg-green-950/80 border border-green-300 dark:border-green-800 text-green-700 dark:text-green-300 font-bold px-2.5 py-1 rounded-md flex items-center gap-1">
+                        <Check className="w-3 h-3" /> ENABLED
+                      </span>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={handleStart2FASetup}
+                        disabled={isSettingUp2FA}
+                        className="bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold px-3.5 py-1.5 rounded-lg cursor-pointer transition-colors flex items-center gap-1.5 disabled:opacity-50"
+                      >
+                        {isSettingUp2FA ? <Loader2 className="w-3 h-3 animate-spin" /> : <QrCode className="w-3.5 h-3.5" />}
+                        <span>Setup 2FA</span>
+                      </button>
+                    )}
+                  </div>
+
+                  {/* 2FA Setup Flow Drawer */}
+                  {setup2FAData && !twoFactorEnabled && (
+                    <div className="p-4 bg-zinc-50 dark:bg-[#09090b] border border-blue-200 dark:border-blue-900/60 rounded-xl space-y-4 animate-fadeIn">
+                      <div className="flex justify-between items-center border-b border-zinc-200 dark:border-zinc-800 pb-2">
+                        <span className="text-xs font-bold text-zinc-900 dark:text-white">Scan QR Code or Enter Key</span>
+                        <button type="button" onClick={() => setSetup2FAData(null)} className="text-xs text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300">Cancel</button>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-center">
+                        <div className="p-3 bg-white rounded-lg border border-zinc-200 flex flex-col items-center justify-center">
+                          <img 
+                            src={`https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(setup2FAData.uri)}`} 
+                            alt="2FA QR Code" 
+                            className="w-32 h-32"
+                          />
+                          <span className="text-[10px] text-zinc-500 mt-1">Scan with Authenticator App</span>
+                        </div>
+
+                        <div className="space-y-2 text-xs">
+                          <span className="text-zinc-600 dark:text-zinc-400 block">Manual Secret Key:</span>
+                          <div className="p-2 bg-zinc-200 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-800 rounded font-mono text-[11px] font-bold text-zinc-800 dark:text-zinc-200 tracking-wider flex items-center justify-between">
+                            <span>{setup2FAData.secret}</span>
+                            <button
+                              type="button"
+                              onClick={() => navigator.clipboard.writeText(setup2FAData.secret)}
+                              className="text-xs text-blue-600 dark:text-blue-400 hover:underline"
+                            >
+                              Copy
+                            </button>
+                          </div>
+                          <p className="text-[11px] text-zinc-500 leading-normal">
+                            Open Google Authenticator or 1Password, scan the code, and enter the 6-digit code generated.
+                          </p>
+                        </div>
+                      </div>
+
+                      <form onSubmit={handleVerify2FACode} className="pt-2 border-t border-zinc-200 dark:border-zinc-800 flex items-center gap-2">
+                        <input
+                          type="text"
+                          maxLength={6}
+                          placeholder="6-digit code (e.g. 123456)"
+                          value={totpCode}
+                          onChange={(e) => setTotpCode(e.target.value.replace(/\D/g, ''))}
+                          className="bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 rounded-lg p-2 text-xs text-zinc-900 dark:text-zinc-100 font-mono text-center tracking-widest w-44 focus:outline-none focus:border-blue-500"
+                        />
+                        <button
+                          type="submit"
+                          disabled={isVerifying2FA}
+                          className="bg-green-600 hover:bg-green-700 text-white text-xs font-bold px-4 py-2 rounded-lg cursor-pointer transition-colors flex items-center gap-1.5 disabled:opacity-50"
+                        >
+                          {isVerifying2FA ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
+                          <span>Verify & Enable</span>
+                        </button>
+                      </form>
+
+                      {totpError && (
+                        <p className="text-xs text-red-600 dark:text-red-400 font-mono">{totpError}</p>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Backup Codes Modal / Display */}
+                  {backupCodes.length > 0 && (
+                    <div className="p-4 bg-zinc-900 border border-zinc-800 rounded-xl space-y-3">
+                      <div className="flex justify-between items-center">
+                        <span className="text-xs font-bold text-white">Save Backup Recovery Codes</span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            navigator.clipboard.writeText(backupCodes.join('\n'));
+                            setCopiedCodes(true);
+                            setTimeout(() => setCopiedCodes(false), 2000);
+                          }}
+                          className="text-xs text-blue-400 hover:underline flex items-center gap-1"
+                        >
+                          <Copy className="w-3 h-3" /> {copiedCodes ? 'Copied!' : 'Copy All'}
+                        </button>
+                      </div>
+                      <p className="text-[11px] text-zinc-400">
+                        Store these single-use recovery codes in a safe password manager. If you lose access to your phone, these are the only way to recover access.
+                      </p>
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 font-mono text-[11px] text-zinc-300 bg-black/50 p-3 rounded-lg border border-zinc-800">
+                        {backupCodes.map((code, idx) => (
+                          <div key={idx} className="p-1 bg-zinc-900 rounded text-center">{code}</div>
+                        ))}
                       </div>
                     </div>
-                    <span className="text-[9px] bg-green-950 border border-green-800 text-green-400 px-2 py-0.5 rounded">ACTIVE</span>
+                  )}
+
+                  {twoFactorEnabled && (
+                    <div className="pt-2">
+                      <button
+                        type="button"
+                        onClick={handleDisable2FA}
+                        className="text-xs text-red-600 dark:text-red-400 hover:underline cursor-pointer"
+                      >
+                        Disable Two-Factor Authentication
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                {/* Active Sessions Manager */}
+                <div className="pt-4 border-t border-zinc-200 dark:border-zinc-800/80 space-y-3">
+                  <div className="flex justify-between items-center">
+                    <span className="text-xs font-bold text-zinc-900 dark:text-white block">Active Logged-In Sessions</span>
+                    <button type="button" onClick={fetchSessions} className="text-xs text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300 flex items-center gap-1">
+                      <RefreshCw className="w-3 h-3" /> Refresh
+                    </button>
                   </div>
+
+                  {isLoadingSessions ? (
+                    <div className="p-4 text-center text-xs text-zinc-500 flex items-center justify-center gap-2">
+                      <Loader2 className="w-4 h-4 animate-spin" /> Loading sessions...
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {sessions.map(sess => (
+                        <div key={sess.id} className="p-3 bg-zinc-50 dark:bg-[#09090b] border border-zinc-200 dark:border-zinc-800 rounded-lg flex items-center justify-between text-xs font-mono">
+                          <div className="flex items-center gap-2.5">
+                            <Laptop className="w-4 h-4 text-zinc-500 shrink-0" />
+                            <div>
+                              <span className="text-zinc-800 dark:text-zinc-200 font-semibold block">{sess.userAgent}</span>
+                              <span className="text-[10px] text-zinc-500">IP: {sess.ipAddress} • Last active: {new Date(sess.lastActiveAt).toLocaleTimeString()}</span>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-[9px] bg-green-100 dark:bg-green-950 border border-green-300 dark:border-green-800 text-green-700 dark:text-green-400 px-2 py-0.5 rounded font-bold">ACTIVE</span>
+                            <button
+                              type="button"
+                              onClick={() => handleRevokeSession(sess.id)}
+                              className="text-[10px] text-red-600 dark:text-red-400 hover:underline cursor-pointer"
+                            >
+                              Revoke
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
             )}
@@ -259,16 +602,16 @@ export default function SettingsView({ user, onUpdateUser }: SettingsViewProps) 
             {/* 4. DEVELOPER API KEYS */}
             {activeTab === 'developer' && (
               <div className="space-y-5">
-                <div className="border-b border-zinc-800/80 pb-2">
-                  <h2 className="text-sm font-bold text-white uppercase tracking-wider">Bring Your Own API Key</h2>
-                  <p className="text-xs text-zinc-400 mt-1">Configure your personal keys to route AI interview questions directly through your preferred LLM providers.</p>
+                <div className="border-b border-zinc-200 dark:border-zinc-800/80 pb-2">
+                  <h2 className="text-sm font-bold text-zinc-900 dark:text-white uppercase tracking-wider">Bring Your Own API Key</h2>
+                  <p className="text-xs text-zinc-600 dark:text-zinc-400 mt-1">Configure your personal keys to route AI interview questions directly through your preferred LLM providers.</p>
                 </div>
 
                 {/* Gemini Key */}
                 <div className="space-y-1">
                   <div className="flex justify-between items-center text-xs">
-                    <label className="font-semibold text-zinc-300">Gemini API Key</label>
-                    <button type="button" onClick={() => toggleShowKey('gemini')} className="text-zinc-500 hover:text-white">
+                    <label className="font-semibold text-zinc-700 dark:text-zinc-300">Gemini API Key</label>
+                    <button type="button" onClick={() => toggleShowKey('gemini')} className="text-zinc-500 hover:text-zinc-900 dark:hover:text-white">
                       {showKeys['gemini'] ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
                     </button>
                   </div>
@@ -277,15 +620,15 @@ export default function SettingsView({ user, onUpdateUser }: SettingsViewProps) 
                     value={geminiKey}
                     onChange={(e) => setGeminiKey(e.target.value)}
                     placeholder="AIzaSy..."
-                    className="w-full bg-[#09090b] border border-zinc-800 rounded-lg p-2.5 text-xs text-zinc-200 focus:outline-none focus:border-blue-500 font-mono"
+                    className="w-full bg-zinc-50 dark:bg-[#09090b] border border-zinc-200 dark:border-zinc-800 rounded-lg p-2.5 text-xs text-zinc-900 dark:text-zinc-200 focus:outline-none focus:border-blue-500 font-mono"
                   />
                 </div>
 
                 {/* OpenAI Key */}
                 <div className="space-y-1">
                   <div className="flex justify-between items-center text-xs">
-                    <label className="font-semibold text-zinc-300">OpenAI API Key</label>
-                    <button type="button" onClick={() => toggleShowKey('openai')} className="text-zinc-500 hover:text-white">
+                    <label className="font-semibold text-zinc-700 dark:text-zinc-300">OpenAI API Key</label>
+                    <button type="button" onClick={() => toggleShowKey('openai')} className="text-zinc-500 hover:text-zinc-900 dark:hover:text-white">
                       {showKeys['openai'] ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
                     </button>
                   </div>
@@ -294,15 +637,15 @@ export default function SettingsView({ user, onUpdateUser }: SettingsViewProps) 
                     value={openaiKey}
                     onChange={(e) => setOpenaiKey(e.target.value)}
                     placeholder="sk-proj-..."
-                    className="w-full bg-[#09090b] border border-zinc-800 rounded-lg p-2.5 text-xs text-zinc-200 focus:outline-none focus:border-blue-500 font-mono"
+                    className="w-full bg-zinc-50 dark:bg-[#09090b] border border-zinc-200 dark:border-zinc-800 rounded-lg p-2.5 text-xs text-zinc-900 dark:text-zinc-200 focus:outline-none focus:border-blue-500 font-mono"
                   />
                 </div>
 
                 {/* Anthropic Key */}
                 <div className="space-y-1">
                   <div className="flex justify-between items-center text-xs">
-                    <label className="font-semibold text-zinc-300">Anthropic Claude Key</label>
-                    <button type="button" onClick={() => toggleShowKey('anthropic')} className="text-zinc-500 hover:text-white">
+                    <label className="font-semibold text-zinc-700 dark:text-zinc-300">Anthropic Claude Key</label>
+                    <button type="button" onClick={() => toggleShowKey('anthropic')} className="text-zinc-500 hover:text-zinc-900 dark:hover:text-white">
                       {showKeys['anthropic'] ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
                     </button>
                   </div>
@@ -311,7 +654,7 @@ export default function SettingsView({ user, onUpdateUser }: SettingsViewProps) 
                     value={anthropicKey}
                     onChange={(e) => setAnthropicKey(e.target.value)}
                     placeholder="sk-ant-..."
-                    className="w-full bg-[#09090b] border border-zinc-800 rounded-lg p-2.5 text-xs text-zinc-200 focus:outline-none focus:border-blue-500 font-mono"
+                    className="w-full bg-zinc-50 dark:bg-[#09090b] border border-zinc-200 dark:border-zinc-800 rounded-lg p-2.5 text-xs text-zinc-900 dark:text-zinc-200 focus:outline-none focus:border-blue-500 font-mono"
                   />
                 </div>
               </div>
@@ -320,9 +663,9 @@ export default function SettingsView({ user, onUpdateUser }: SettingsViewProps) 
             {/* 5. NOTIFICATIONS */}
             {activeTab === 'notifications' && (
               <div className="space-y-6">
-                <div className="border-b border-zinc-800/80 pb-2">
-                  <h2 className="text-sm font-bold text-white uppercase tracking-wider">Notification Preferences</h2>
-                  <p className="text-xs text-zinc-400 mt-1">Manage how and when InterviewOps communicates updates and practice reminders to you.</p>
+                <div className="border-b border-zinc-200 dark:border-zinc-800/80 pb-2">
+                  <h2 className="text-sm font-bold text-zinc-900 dark:text-white uppercase tracking-wider">Notification Preferences</h2>
+                  <p className="text-xs text-zinc-600 dark:text-zinc-400 mt-1">Manage how and when InterviewOps communicates updates and practice reminders to you.</p>
                 </div>
 
                 <div className="space-y-4">
@@ -352,11 +695,11 @@ export default function SettingsView({ user, onUpdateUser }: SettingsViewProps) 
                     <div 
                       key={item.id} 
                       onClick={item.onChange}
-                      className="p-4 rounded-xl border border-zinc-800/80 bg-[#09090b] hover:border-zinc-700/80 transition-all cursor-pointer flex items-center justify-between gap-4"
+                      className="p-4 rounded-xl border border-zinc-200 dark:border-zinc-800/80 bg-zinc-50 dark:bg-[#09090b] hover:border-zinc-300 dark:hover:border-zinc-700/80 transition-all cursor-pointer flex items-center justify-between gap-4"
                     >
                       <div className="space-y-0.5">
-                        <span className="text-xs font-bold text-white block">{item.title}</span>
-                        <p className="text-[11px] text-zinc-400 leading-normal">{item.description}</p>
+                        <span className="text-xs font-bold text-zinc-900 dark:text-white block">{item.title}</span>
+                        <p className="text-[11px] text-zinc-600 dark:text-zinc-400 leading-normal">{item.description}</p>
                       </div>
 
                       {/* Modern Toggle Slider */}
@@ -366,7 +709,7 @@ export default function SettingsView({ user, onUpdateUser }: SettingsViewProps) 
                         className={`w-12 h-6 rounded-full transition-colors duration-200 ease-in-out p-1 shrink-0 cursor-pointer relative border ${
                           item.checked 
                             ? 'bg-blue-600 border-blue-500/50 shadow-sm shadow-blue-500/20' 
-                            : 'bg-zinc-800/80 border-zinc-700/50'
+                            : 'bg-zinc-200 dark:bg-zinc-800/80 border-zinc-300 dark:border-zinc-700/50'
                         }`}
                       >
                         <div 
@@ -384,14 +727,14 @@ export default function SettingsView({ user, onUpdateUser }: SettingsViewProps) 
             {/* 6. PRIVACY */}
             {activeTab === 'privacy' && (
               <div className="space-y-4">
-                <h2 className="text-sm font-bold text-white uppercase tracking-wider border-b border-zinc-800/80 pb-2">Privacy & Data Control</h2>
-                <p className="text-xs text-zinc-400 leading-relaxed">
+                <h2 className="text-sm font-bold text-zinc-900 dark:text-white uppercase tracking-wider border-b border-zinc-200 dark:border-zinc-800/80 pb-2">Privacy & Data Control</h2>
+                <p className="text-xs text-zinc-600 dark:text-zinc-400 leading-relaxed">
                   Your uploaded resumes and session evaluations are private to your account space.
                 </p>
                 <button
                   type="button"
                   onClick={() => alert('Search and session cache cleared.')}
-                  className="bg-zinc-900 border border-zinc-800 text-xs text-zinc-300 px-4 py-2 rounded-lg hover:bg-zinc-800 cursor-pointer"
+                  className="bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 text-xs text-zinc-800 dark:text-zinc-300 px-4 py-2 rounded-lg hover:bg-zinc-200 dark:hover:bg-zinc-800 cursor-pointer"
                 >
                   Clear Local Practice Cache
                 </button>
@@ -400,9 +743,9 @@ export default function SettingsView({ user, onUpdateUser }: SettingsViewProps) 
 
             {/* 7. DANGER ZONE / DELETE ACCOUNT */}
             {activeTab === 'danger' && (
-              <div className="space-y-4 border border-red-900/60 bg-red-950/10 p-5 rounded-xl">
-                <h2 className="text-sm font-bold text-red-400 uppercase tracking-wider">Danger Zone</h2>
-                <p className="text-xs text-zinc-400 leading-relaxed">
+              <div className="space-y-4 border border-red-200 dark:border-red-900/60 bg-red-50/50 dark:bg-red-950/10 p-5 rounded-xl">
+                <h2 className="text-sm font-bold text-red-600 dark:text-red-400 uppercase tracking-wider">Danger Zone</h2>
+                <p className="text-xs text-zinc-600 dark:text-zinc-400 leading-relaxed">
                   Permanently delete your InterviewOps account, saved resume library, and interview session history. This action cannot be undone.
                 </p>
                 <button
@@ -421,15 +764,15 @@ export default function SettingsView({ user, onUpdateUser }: SettingsViewProps) 
 
             {/* Save CTA for non-danger tabs */}
             {activeTab !== 'danger' && (
-              <div className="pt-4 border-t border-zinc-800/80 flex justify-end">
+              <div className="pt-4 border-t border-zinc-200 dark:border-zinc-800/80 flex justify-end">
                 <button
                   type="submit"
                   disabled={isSaving}
-                  className="bg-white hover:bg-zinc-200 text-black text-xs font-bold px-6 py-2.5 rounded-lg transition-colors cursor-pointer flex items-center gap-2 disabled:opacity-60"
+                  className="bg-zinc-900 dark:bg-white hover:bg-zinc-800 dark:hover:bg-zinc-200 text-white dark:text-black text-xs font-bold px-6 py-2.5 rounded-lg transition-colors cursor-pointer flex items-center gap-2 disabled:opacity-60 shadow-sm"
                 >
                   {isSaving ? (
                     <>
-                      <Loader2 className="w-3.5 h-3.5 animate-spin text-black" />
+                      <Loader2 className="w-3.5 h-3.5 animate-spin text-white dark:text-black" />
                       <span>Saving Changes...</span>
                     </>
                   ) : (

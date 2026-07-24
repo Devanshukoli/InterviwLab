@@ -89,11 +89,11 @@ export default function AuthModal({ isOpen, onClose, onSuccess }: AuthModalProps
     }
   };
 
-   const handleGoogleSignIn = async () => {
+  const handleGoogleSignIn = async () => {
     setIsLoading(true);
     setError(null);
-     try {
-       // 1. Check if Google OAuth URL is available on server
+    try {
+      // 1. Check if Google OAuth URL is available on server
       const urlRes = await fetch('/api/auth/google/url');
       const urlJson = await urlRes.json();
 
@@ -116,8 +116,8 @@ export default function AuthModal({ isOpen, onClose, onSuccess }: AuthModalProps
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          email: email || 'devanshu.google@interviewops.io',
-          name: email || 'Devanshu Koli (Google)'
+          email: email,
+          name: name
         })
       });
       const json = await res.json();

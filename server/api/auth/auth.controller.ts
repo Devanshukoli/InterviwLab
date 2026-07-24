@@ -37,7 +37,7 @@ export class AuthController {
 
     const host = req.get('host') || 'localhost:3000';
     const protocol = req.protocol || 'http';
-    const redirectUri = process.env.APP_URL
+    const redirectUri = process.env.APP_URL 
       ? `${process.env.APP_URL.replace(/\/$/, '')}/auth/callback`
       : `${protocol}://${host}/auth/callback`;
 
@@ -70,7 +70,7 @@ export class AuthController {
 
     const host = req.get('host') || 'localhost:3000';
     const protocol = req.protocol || 'http';
-    const redirectUri = process.env.APP_URL
+    const redirectUri = process.env.APP_URL 
       ? `${process.env.APP_URL.replace(/\/$/, '')}/auth/callback`
       : `${protocol}://${host}/auth/callback`;
 
@@ -233,5 +233,51 @@ export class AuthController {
     const userId = user?.id || 'usr-default';
     const data = AuthService.getLogins(userId);
     res.json({ success: true, data });
+  });
+
+  static changePassword = catchAsync(async (req: Request, res: Response): Promise<void> => {
+    const user = req.user || AuthService.getCurrentUser();
+    const userId = user?.id || 'usr-default';
+    const { currentPassword, newPassword } = req.body;
+    await AuthService.changePassword(userId, currentPassword, newPassword);
+    res.json({ success: true, message: 'Password updated successfully' });
+  });
+
+  static setup2FA = catchAsync(async (req: Request, res: Response): Promise<void> => {
+    const user = req.user || AuthService.getCurrentUser();
+    const userId = user?.id || 'usr-default';
+    const data = await AuthService.setup2FA(userId);
+    res.json({ success: true, data });
+  });
+
+  static verify2FA = catchAsync(async (req: Request, res: Response): Promise<void> => {
+    const user = req.user || AuthService.getCurrentUser();
+    const userId = user?.id || 'usr-default';
+    const { code } = req.body;
+    const data = await AuthService.verifyAndEnable2FA(userId, code);
+    res.json({ success: true, data, message: '2FA enabled successfully' });
+  });
+
+  static disable2FA = catchAsync(async (req: Request, res: Response): Promise<void> => {
+    const user = req.user || AuthService.getCurrentUser();
+    const userId = user?.id || 'usr-default';
+    await AuthService.disable2FA(userId);
+    res.json({ success: true, message: '2FA disabled successfully' });
+  });
+
+  static getSessions = catchAsync(async (req: Request, res: Response): Promise<void> => {
+    const user = req.user || AuthService.getCurrentUser();
+    const userId = user?.id || 'usr-default';
+    const token = req.headers.authorization?.replace('Bearer ', '');
+    const data = AuthService.getActiveSessions(userId, token);
+    res.json({ success: true, data });
+  });
+
+  static revokeSession = catchAsync(async (req: Request, res: Response): Promise<void> => {
+    const user = req.user || AuthService.getCurrentUser();
+    const userId = user?.id || 'usr-default';
+    const { sessionId } = req.params;
+    AuthService.revokeSession(userId, sessionId);
+    res.json({ success: true, message: 'Session revoked successfully' });
   });
 }

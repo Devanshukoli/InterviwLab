@@ -26,7 +26,20 @@ html {
 /* Custom glow animations and layouts */
 body {
   margin: 0;
+  background-color: #f8fafc;
+  color: #09090b;
+}
+
+html.dark body {
   background-color: #09090b;
   color: #fafafa;
+}
+
+html.dark ::-webkit-scrollbar-track {
+  background: #09090b;
+}
+
+html.dark ::-webkit-scrollbar-thumb {
+  background: #1f1f23;
 }
 
